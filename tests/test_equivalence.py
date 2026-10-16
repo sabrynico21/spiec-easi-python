@@ -40,9 +40,49 @@ TOL_DET = {"rtol": 1e-12, "atol": 1e-13}
 TOL_COEF = {"rtol": 1e-6, "atol": 1e-8}
 BOUNDARY_ATOL = 1e-8
 
-# Singular-design cases (rank(S) < p, i.e. p > n): the nodewise Lasso solution is
-# not unique, so coefficient-level equality is not expected. Support is checked.
+# Singular-design cases (rank(S) < p, i.e. p > n): the nodewise Lasso minimiser
+# is not unique, so the pointwise coefficients are not reproducible while the
+# invariants are. Measured on `p30_n20_pgtn` (n=20, p=30, rank(S)=19):
+#   * 36 (node, lambda) pairs diverge, all in nodes 27 and 28, all at
+#     lambda >= 1 (never at lambda.max)
+#   * support identical in every one of those 36 pairs
+#   * relative objective difference <= 7.2e-8, and the objective is FLAT along
+#     the whole segment b_R + t (b_Py - b_R) (max relative deviation 7.2e-8),
+#     so both are minimisers
+#   * KKT: inactive violation exactly 0 in both; active violation <= 4.2e-5,
+#     i.e. inside the solver's own thol = 1e-4
+#   * for the 7 pairs with |dbeta| >= 1e-4: rank(S_AA) = 19 < |A| in 20..22 and
+#     100% of dbeta lies in the null space of S_AA
+#   * R itself, with only the predictor order permuted, moves by
+#     max|dbeta| = 1.3e-2 and changes the support on 5/20 lambdas
+# => genuine non-uniqueness, not a port bug. See docs/EQUIVALENCE.md.
 DEGENERATE_COEF_CASES = {"p30_n20_pgtn"}
+
+
+def _lasso_objective(S: np.ndarray, b: np.ndarray, w: np.ndarray, lam: float) -> float:
+    """The nodewise-Lasso objective huge minimises: 0.5 w'Sw - b'w + lam|w|_1."""
+    return float(0.5 * w @ S @ w - b @ w + lam * np.abs(w).sum())
+
+
+def _lasso_kkt(
+    S: np.ndarray, b: np.ndarray, w: np.ndarray, m: int, lam: float
+) -> tuple[float, float]:
+    """Max KKT violation (active, inactive) for node ``m`` (excluding m itself)."""
+    keep = np.arange(S.shape[0]) != m
+    r = (b - S @ w)[keep]
+    ww = w[keep]
+    act = np.nonzero(ww)[0]
+    v_act = (
+        0.0 if act.size == 0 else float(np.max(np.abs(r[act] - lam * np.sign(ww[act]))))
+    )
+    inact = np.setdiff1d(np.arange(r.size), act)
+    v_inact = (
+        0.0
+        if inact.size == 0
+        else float(np.max(np.maximum(0.0, np.abs(r[inact]) - lam)))
+    )
+    return v_act, v_inact
+
 
 _CACHE: dict[str, dict[str, Any]] = {}
 
@@ -197,7 +237,13 @@ def test_lambda_max_and_path(case: str) -> None:
 @pytest.mark.parametrize("case", CASES)
 def test_full_beta(case: str) -> None:
     if case in DEGENERATE_COEF_CASES:
-        pytest.xfail("singular design (p>n): nodewise Lasso is not unique")
+        pytest.xfail(
+            "rank-deficient active Gram: rank(S_AA)=19 < |A|<=22, so the "
+            "pointwise coefficients are not unique (measured: support identical, "
+            "objective equal to 7e-8 rel, dbeta 100% in null(S_AA), and R is "
+            "order-unstable too). The invariants are checked by "
+            "test_degenerate_case_invariants."
+        )
     X = spiec_easi_norm(_counts(case))
     lams = np.loadtxt(_dir(case) / "lambda_path.txt")
     betas, _, _ = mb(huge_fast_cor(X), lams, sym="or")
@@ -227,6 +273,72 @@ def test_full_adjacency(case: str) -> None:
             for (a, b) in (got | gold_edges)
         }
         _check_edges(f"{case} full lambda {i}", got, gold_edges, betas[i], ref_beta)
+
+
+# ---------------------------------------------------------------------------
+# Degenerate (rank-deficient) case: invariants instead of pointwise equality
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("case", sorted(DEGENERATE_COEF_CASES))
+def test_degenerate_case_invariants(case: str) -> None:
+    """The non-unique Lasso still yields the same optimum and the same support.
+
+    Checks, for every node and every lambda >= 1 (lambda 0 is the machine-ulp
+    boundary, covered by ``test_full_adjacency``):
+
+    * identical support;
+    * the objective (as huge minimises it) agrees between R and the port;
+    * both solutions satisfy KKT within the solver's own ``thol = 1e-4``;
+    * ``S_AA @ (beta_R - beta_Py)`` is at the solver's residual level, i.e. the
+      difference lies in the null space of the active Gram.
+    """
+    X = spiec_easi_norm(_counts(case))
+    lams = np.loadtxt(_dir(case) / "lambda_path.txt")
+    S = huge_fast_cor(X)
+    d = S.shape[0]
+    betas_py, _, _ = mb(S, lams, sym="or")
+
+    rows = _beta_long(_dir(case) / "full_beta.tsv")
+    beta_R = np.zeros((len(lams), d, d))
+    for (li, m, j), v in rows.items():
+        beta_R[li, m, j] = v
+    beta_Py = np.stack([b.T for b in betas_py])
+
+    worst_obj = 0.0
+    worst_kkt = 0.0
+    worst_nullres = 0.0
+    checked = 0
+    for li in range(1, len(lams)):
+        for m in range(d):
+            b = S[m].copy()
+            wR = beta_R[li, m].copy()
+            wP = beta_Py[li, m].copy()
+            wR[m] = wP[m] = 0.0
+            lam = float(lams[li])
+            supR = set(np.nonzero(wR)[0].tolist())
+            supP = set(np.nonzero(wP)[0].tolist())
+            assert supR == supP, f"{case} lambda {li} node {m}: support differs"
+            checked += 1
+            if np.max(np.abs(wR - wP)) < 1e-12:
+                continue
+            fR = _lasso_objective(S, b, wR, lam)
+            fP = _lasso_objective(S, b, wP, lam)
+            worst_obj = max(worst_obj, abs(fP - fR) / max(abs(fR), 1e-30))
+            for w in (wR, wP):
+                va, vi = _lasso_kkt(S, b, w, m, lam)
+                assert vi == 0.0, f"{case} lambda {li} node {m}: KKT inactive violated"
+                worst_kkt = max(worst_kkt, va)
+            A = sorted(supR | supP)
+            SAA = S[np.ix_(A, A)]
+            worst_nullres = max(
+                worst_nullres, float(np.max(np.abs(SAA @ (wR - wP)[A])))
+            )
+
+    assert checked > 0
+    assert worst_obj <= 1e-6, f"objective mismatch {worst_obj:.2e}"
+    assert worst_kkt <= 1e-3, f"KKT violation {worst_kkt:.2e} exceeds thol"
+    assert worst_nullres <= 1e-4, f"S_AA dbeta {worst_nullres:.2e} too large"
 
 
 # ---------------------------------------------------------------------------

@@ -41,3 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The previous standalone `spiec-easi-python` implementation (source, tests,
   golden fixtures, docs, benchmarks, examples, packaging) was deleted; the port
   is being rebuilt from the R source.
+
+### Notes
+
+- The `p > n` golden case (`p30_n20_pgtn`) was investigated in depth: the
+  pointwise MB coefficients are **non-unique** (rank-deficient active Gram),
+  while the support, the objective, the KKT conditions, the StARS curve,
+  `opt_index` and the refit all agree. R itself is order-unstable on that case.
+  The generic `xfail` was replaced by an invariants test plus a narrow,
+  documented `xfail`; see `docs/EQUIVALENCE.md`.
+- `reference/deps/` now keeps only the sources actually ported (`huge`, `pulsar`)
+  with versions, CRAN URLs, SHA-256 checksums and licences in
+  `reference/deps/FETCH.md`; `glmnet` and `Matrix` were removed.

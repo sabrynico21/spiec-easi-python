@@ -59,14 +59,21 @@ def _solve_subsample(
 def _pool_context() -> Any:
     """Multiprocessing context for the subsample pool.
 
-    ``fork`` is used where available (POSIX): it does not need the entry point
-    to be importable and avoids Python 3.14's ``forkserver`` default, which
-    fails when the caller runs from stdin. Windows falls back to ``spawn``.
+    ``fork`` is used on Linux only: it avoids Python 3.14's ``forkserver``
+    default (which re-imports the entry point and fails when the caller runs
+    from stdin) and needs no importable ``__main__``. Everywhere else
+    (Windows, macOS) the platform default is used, i.e. ``spawn``; that path
+    requires an entry point guarded by ``if __name__ == "__main__"`` and
+    ``multiprocessing.freeze_support()`` (both are present in
+    :mod:`spieceasi.__main__` and :func:`spieceasi.cli.main`).
+
+    The ``spawn`` path has **not been executed** in this repository (the
+    equivalence work was Linux x86-64 only); see ``docs/EQUIVALENCE.md``.
     """
     import multiprocessing as mp
-    import os
+    import sys
 
-    if hasattr(os, "fork"):
+    if sys.platform.startswith("linux"):
         return mp.get_context("fork")
     return mp.get_context("spawn")
 
