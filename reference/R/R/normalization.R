@@ -1,0 +1,189 @@
+#####################################################################
+# Different normalization schemes for microbiome counts (real or fake)
+#
+# @author Zachary Kurtz
+# @date 10/10/2013
+#####################################################################
+
+#' Normalize w/ Pseudocount
+#'
+#' add pseudocount before normalizing a count vector
+#'
+#' @param x count data vector
+#' @export
+#' @examples
+#' x <- c(1, 2, 0, 4)
+#' norm_pseudo(x)  # Adds 1 to each value before normalizing
+norm_pseudo  <- function(x) norm_to_total(x+1)
+
+#' Total Sum Normalize
+#'
+#' Normalize a count vector by the total sum of that vector
+#' @param x count data vector
+#' @export
+#' @examples
+#' x <- c(1, 2, 3, 4)
+#' norm_to_total(x)  # Divides each value by sum(x) = 10
+norm_to_total <- function(x) x/sum(x)
+
+
+#' Normalize via dirichlet sampling
+#'
+#' "Normalize" a count vector by drawing a single sample from a Dirichlet distribution, using the count vector as the prior.
+#' @param x count data vector
+#' @return A single sample from Dirichlet distribution
+#' @export
+#' @examples
+#' x <- c(1, 2, 3, 4)
+#' norm_rdiric(x)  # Returns a single sample from Dirichlet distribution
+norm_rdiric <- function(x) {
+  VGAM::rdiric(n=1, shape=x)[1,]
+}
+
+#' compute the shannon entropy from a vector (normalized internally)
+#'
+#' Shannon entropy is:
+#'     sum \[ x_i log(x_i) \]
+#'
+#' @param x data vector
+#' @return shannon entropy in base e
+#' @export
+#' @examples
+#' x <- c(1, 2, 3, 4)
+#' shannon(x)  # Returns Shannon entropy of normalized vector
+shannon <- function(x) {
+    x.f <- norm_to_total(x)
+    -sum(x.f*log(x.f), na.rm=TRUE)
+}
+
+#' N_effective: Compute the exponential of the shannon entropy. linearizes shannon entropy, for a better diveristy metric (effective number of species)
+#'
+#' @param x data vector
+#' @return N_eff in base e
+#' @export
+#' @examples
+#' x <- c(1, 2, 3, 4)
+#' neff(x)  # Returns effective number of species
+neff <- function(x) exp(shannon(x))
+
+
+#' Centered log-ratio functions
+#' @param x.f input data
+#' @param ... pass through arguments
+#' @return Centered log-ratio transformed data
+#' @export
+#' @examples
+#' x <- c(1, 2, 3, 4)
+#' clr(x)  # Returns centered log-ratio transformation
+#' 
+#' # Matrix example
+#' mat <- matrix(1:12, nrow=3)
+#' clr(mat)  # CLR transformation by columns
+#' 
+#' # Data frame example
+#' df <- as.data.frame(mat)
+#' clr(df)  # CLR transformation by columns
+clr <- function(x.f, ...) {
+    UseMethod('clr')
+}
+
+#' @method clr default
+#' @param base base for log transformation
+#' @param tol tolerance for a numerical zero
+#' @rdname clr
+#' @export
+clr.default <- function(x.f, base=exp(1), tol=.Machine$double.eps, ...) {
+    nzero <- (x.f >= tol)
+    LOG <- log(ifelse(nzero, x.f, 1), base)
+    ifelse(nzero, LOG - mean(LOG)/mean(nzero), 0.0)
+}
+
+#' @method clr matrix
+#' @param mar margin to apply the transformation (rows: 1 or cols: 2)
+#' @rdname clr
+#' @export
+clr.matrix <- function(x.f, mar=2, ...) {
+    apply(x.f, mar, clr, ...)
+}
+
+#' @method clr data.frame
+#' @rdname clr
+#' @export
+clr.data.frame <- function(x.f, mar=2, ...) {
+    clr(as.matrix(x.f), mar, ...)
+}
+
+#' Additive log-ratio functions
+#' @param x.f input data
+#' @param ... pass through arguments
+#' @return Additive log-ratio transformed data
+#' @export
+#' @examples
+#' x <- c(1, 2, 3, 4)
+#' alr(x)  # Returns additive log-ratio transformation using first component as reference
+#' 
+#' # Matrix example
+#' mat <- matrix(1:12, nrow=3)
+#' alr(mat)  # ALR transformation by columns
+#' 
+#' # Data frame example
+#' df <- as.data.frame(mat)
+#' alr(df)  # ALR transformation by columns
+alr <- function(x.f, ...) {
+    UseMethod("alr")
+}
+
+#' @method alr default
+#' @param divcomp the index of the component to use as the divisor
+#' @param base base for log transformation
+#' @param removeDivComp remove the divisor component from the alr result
+#' @param tol tolerance for a numerical zero
+#' @rdname alr
+#' @export
+alr.default <- function(x.f, divcomp=1, base=exp(1), removeDivComp=TRUE,
+                        tol=.Machine$double.eps, ...) {
+    zero <- (x.f >= tol)
+    LOG <- log(ifelse(zero, x.f, 1), base)
+    x.alr <- ifelse(zero, LOG - LOG[divcomp], 0.0)
+    if (removeDivComp) x.alr[-divcomp]
+    else x.alr
+}
+
+
+#' @method alr matrix
+#' @param mar margin to apply the transformation (rows: 1 or cols: 2)
+#' @rdname alr
+#' @export
+alr.matrix <- function(x.f, mar=2, divcomp=1, base=exp(1), removeDivComp=TRUE,
+                        tol=.Machine$double.eps, ...) {
+    if (mar == 1) x.f <- t(x.f)
+    zero <- (x.f >= tol)
+    LOG <- log(ifelse(zero, x.f, 1), base)
+    x.alr <- ifelse(zero, LOG - LOG[,divcomp], 0.0)
+    if (removeDivComp) x.alr[,-divcomp]
+    else x.alr
+}
+
+#' @method alr data.frame
+#' @rdname alr
+#' @export
+alr.data.frame <- function(x.f, mar=2, ...) {
+    alr(as.matrix(x.f), mar, ...)
+}
+
+#' @keywords internal
+#' @return Upper triangular elements of matrix
+triu <- function(x) x[upper.tri(x)]
+#' @keywords internal
+tril <- function(x) x[lower.tri(x)]
+
+#' @keywords internal
+triu2diag <- function(x, diagval=0) {
+    e <- length(x)
+    n <- .5 * (sqrt(8*e + 1)+1)
+    mat <- matrix(0, n, n)
+    mat[upper.tri(mat)] <- x
+    mat <- mat + t(mat)
+    diag(mat) <- diagval
+    mat
+}

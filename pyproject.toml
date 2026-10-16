@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spieceasi"
+version = "0.1.0"
+description = "Faithful Python port of the R SpiecEasi (MB / StARS) network-inference pipeline"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "spieceasi-python contributors" }]
+keywords = ["microbiome", "network-inference", "spiec-easi", "stability-selection", "compositional-data"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+# Runtime dependencies kept minimal: only numpy is required for the MB pipeline.
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+spieceasi = "spieceasi.cli:main"
+
+[project.urls]
+"Original R implementation" = "https://github.com/zdk123/SpiecEasi"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spieceasi = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that run the full pipeline / large golden cases",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W", "C4", "SIM"]
+# The port deliberately keeps the R/math notation of the reference source
+# (S, X, W, L, A, M, Theta, Sigma), so argument/variable capitalisation is not
+# enforced.
+ignore = ["N803", "N806"]
+
+[tool.coverage.run]
+source = ["spieceasi"]
+branch = true

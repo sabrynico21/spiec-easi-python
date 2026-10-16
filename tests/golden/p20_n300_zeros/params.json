@@ -1,0 +1,1 @@
+{"method":"mb","sel_criterion":"stars","nlambda":20,"lambda_min_ratio":0.001,"lambda_log":true,"rep_num":20,"thresh":0.05,"seed":103,"n":300,"p":20}
