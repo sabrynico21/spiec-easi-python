@@ -33,30 +33,17 @@ from spieceasi.pipeline import spiec_easi
 from spieceasi.preprocess import huge_fast_cor
 from spieceasi.transforms import spiec_easi_norm
 
-GOLDEN = Path(__file__).parent / "golden"
+GOLDEN = Path(os.environ.get("SPIEC_EASI_GOLDEN_DIR", Path(__file__).parent / "golden"))
 CASES = sorted(p.name for p in GOLDEN.iterdir() if p.is_dir())
 
 TOL_DET = {"rtol": 1e-12, "atol": 1e-13}
 TOL_COEF = {"rtol": 1e-6, "atol": 1e-8}
 BOUNDARY_ATOL = 1e-8
 
-# Singular-design cases (rank(S) < p, i.e. p > n): the nodewise Lasso minimiser
-# is not unique, so the pointwise coefficients are not reproducible while the
-# invariants are. Measured on `p30_n20_pgtn` (n=20, p=30, rank(S)=19):
-#   * 36 (node, lambda) pairs diverge, all in nodes 27 and 28, all at
-#     lambda >= 1 (never at lambda.max)
-#   * support identical in every one of those 36 pairs
-#   * relative objective difference <= 7.2e-8, and the objective is FLAT along
-#     the whole segment b_R + t (b_Py - b_R) (max relative deviation 7.2e-8),
-#     so both are minimisers
-#   * KKT: inactive violation exactly 0 in both; active violation <= 4.2e-5,
-#     i.e. inside the solver's own thol = 1e-4
-#   * for the 7 pairs with |dbeta| >= 1e-4: rank(S_AA) = 19 < |A| in 20..22 and
-#     100% of dbeta lies in the null space of S_AA
-#   * R itself, with only the predictor order permuted, moves by
-#     max|dbeta| = 1.3e-2 and changes the support on 5/20 lambdas
-# => genuine non-uniqueness, not a port bug. See docs/EQUIVALENCE.md.
-DEGENERATE_COEF_CASES = {"p30_n20_pgtn"}
+# The QMP p>n case has rank(S)=19 < p=30. Its R/Python coefficients currently
+# agree to 1.2e-14 absolute, but the design remains singular. Keep objective/KKT
+# checks as mathematical invariants in addition to the pointwise comparison.
+SINGULAR_DESIGN_CASES = {"qmp_n20_p30"}
 
 
 def _lasso_objective(S: np.ndarray, b: np.ndarray, w: np.ndarray, lam: float) -> float:
@@ -190,6 +177,11 @@ def _check_edges(
 
 @pytest.mark.parametrize("case", CASES)
 def test_transform(case: str) -> None:
+    assert _params(case)["dataset"] in {
+        "QMP",
+        "American Gut Project Round 1",
+        "GlobalPatterns / Caporaso et al. 2011",
+    }
     np.testing.assert_allclose(
         spiec_easi_norm(_counts(case)),
         np.loadtxt(_dir(case) / "clr.tsv"),
@@ -236,14 +228,6 @@ def test_lambda_max_and_path(case: str) -> None:
 
 @pytest.mark.parametrize("case", CASES)
 def test_full_beta(case: str) -> None:
-    if case in DEGENERATE_COEF_CASES:
-        pytest.xfail(
-            "rank-deficient active Gram: rank(S_AA)=19 < |A|<=22, so the "
-            "pointwise coefficients are not unique (measured: support identical, "
-            "objective equal to 7e-8 rel, dbeta 100% in null(S_AA), and R is "
-            "order-unstable too). The invariants are checked by "
-            "test_degenerate_case_invariants."
-        )
     X = spiec_easi_norm(_counts(case))
     lams = np.loadtxt(_dir(case) / "lambda_path.txt")
     betas, _, _ = mb(huge_fast_cor(X), lams, sym="or")
@@ -276,13 +260,13 @@ def test_full_adjacency(case: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Degenerate (rank-deficient) case: invariants instead of pointwise equality
+# Singular (p > n) case: coefficient and optimization invariants
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("case", sorted(DEGENERATE_COEF_CASES))
-def test_degenerate_case_invariants(case: str) -> None:
-    """The non-unique Lasso still yields the same optimum and the same support.
+@pytest.mark.parametrize("case", sorted(SINGULAR_DESIGN_CASES))
+def test_singular_case_invariants(case: str) -> None:
+    """Check KKT/objective invariants for the real rank-deficient QMP design.
 
     Checks, for every node and every lambda >= 1 (lambda 0 is the machine-ulp
     boundary, covered by ``test_full_adjacency``):
@@ -290,13 +274,14 @@ def test_degenerate_case_invariants(case: str) -> None:
     * identical support;
     * the objective (as huge minimises it) agrees between R and the port;
     * both solutions satisfy KKT within the solver's own ``thol = 1e-4``;
-    * ``S_AA @ (beta_R - beta_Py)`` is at the solver's residual level, i.e. the
-      difference lies in the null space of the active Gram.
+    * if coefficients differ, ``S_AA @ (beta_R - beta_Py)`` is at the solver's
+      residual level (a null-space difference rather than a different optimum).
     """
     X = spiec_easi_norm(_counts(case))
     lams = np.loadtxt(_dir(case) / "lambda_path.txt")
     S = huge_fast_cor(X)
     d = S.shape[0]
+    assert np.linalg.matrix_rank(S) < d
     betas_py, _, _ = mb(S, lams, sym="or")
 
     rows = _beta_long(_dir(case) / "full_beta.tsv")
@@ -320,8 +305,6 @@ def test_degenerate_case_invariants(case: str) -> None:
             supP = set(np.nonzero(wP)[0].tolist())
             assert supR == supP, f"{case} lambda {li} node {m}: support differs"
             checked += 1
-            if np.max(np.abs(wR - wP)) < 1e-12:
-                continue
             fR = _lasso_objective(S, b, wR, lam)
             fP = _lasso_objective(S, b, wP, lam)
             worst_obj = max(worst_obj, abs(fP - fR) / max(abs(fR), 1e-30))
@@ -329,6 +312,8 @@ def test_degenerate_case_invariants(case: str) -> None:
                 va, vi = _lasso_kkt(S, b, w, m, lam)
                 assert vi == 0.0, f"{case} lambda {li} node {m}: KKT inactive violated"
                 worst_kkt = max(worst_kkt, va)
+            if np.max(np.abs(wR - wP)) < 1e-12:
+                continue
             A = sorted(supR | supP)
             SAA = S[np.ix_(A, A)]
             worst_nullres = max(
@@ -337,7 +322,7 @@ def test_degenerate_case_invariants(case: str) -> None:
 
     assert checked > 0
     assert worst_obj <= 1e-6, f"objective mismatch {worst_obj:.2e}"
-    assert worst_kkt <= 1e-3, f"KKT violation {worst_kkt:.2e} exceeds thol"
+    assert worst_kkt <= 1e-4, f"KKT violation {worst_kkt:.2e} exceeds thol"
     assert worst_nullres <= 1e-4, f"S_AA dbeta {worst_nullres:.2e} too large"
 
 
@@ -397,7 +382,7 @@ def test_per_replica_adjacency(case: str) -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("case", ["p20_n300", "p30_n20_pgtn"])
+@pytest.mark.parametrize("case", ["qmp_n106_p20", "qmp_n20_p30"])
 def test_jobs_determinism(case: str) -> None:
     """Serial and pooled runs must be identical (multiprocessing is exact)."""
     params = _params(case)

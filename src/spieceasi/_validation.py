@@ -35,7 +35,9 @@ def validate_counts(data: Any) -> np.ndarray:
     if np.allclose(row_sums, np.ones_like(row_sums)):
         warnings.warn("Data is normalized, but raw counts are expected", stacklevel=2)
 
-    constant = np.all(arr == arr[0:1, :], axis=0)
-    if bool(np.any(constant)):
-        raise ValueError("data contains a constant (zero-variance) column")
+    # Do not reject constant columns at the raw-count layer. R performs the CLR
+    # transform after adding its pseudocount; a raw constant column can become
+    # variable after row normalization when sample library sizes differ. The R
+    # reference, not this validation wrapper, determines whether the transformed
+    # design is degenerate.
     return arr

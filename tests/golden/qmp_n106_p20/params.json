@@ -1,0 +1,1 @@
+{"method":"mb","sel_criterion":"stars","nlambda":5,"lambda_min_ratio":0.1,"lambda_log":true,"rep_num":4,"thresh":0.2,"seed":1101,"n":106,"p":20,"dataset":"QMP"}

@@ -26,6 +26,26 @@ are committed), but:
 Treat every "identical" claim below as **Linux x86-64 only** until the Windows
 and macOS jobs are actually executed and pass.
 
+## Current committed real-data fixtures
+
+The former synthetic golden directories have been replaced by QMP plus two
+independent public-data sources: American Gut Project Round 1 and
+GlobalPatterns/Caporaso et al. 2011. The cases cover `p < n`, `p > n`, 3 R StARS
+seeds per added family, and different sparsity/library-size profiles. Exact R
+subsample indices are injected. All expanded fixtures run through the same
+CLR, lambda path, MB paths, StARS, and refit comparisons; results are summarized
+in `docs/NUMERICAL_EQUIVALENCE.md`.
+
+The tests currently pass on the pinned Linux environment. This does not imply
+all SPIEC-EASI methods are ported (`glasso`, `slr`, `coat`, `ising`, and
+`poisson` remain out of scope) or that other platforms are equivalent. The
+dataset redistribution terms must also be confirmed before publishing the
+derived fixtures.
+
+The case names and numerical boundary investigations in the historical sections
+below describe the former synthetic golden set; those fixture files are no
+longer part of the current test suite.
+
 
 ## Guaranteed identical (exact / bit-level on the same BLAS)
 
@@ -66,7 +86,7 @@ alignment follows the solver's own stop rule.
   descending while `numpy.linalg.eigh` orders ascending. Only invariant
   quantities are compared.
 
-## Robust vs degenerate golden cases
+## Historical synthetic-golden investigations (fixtures now replaced)
 
 A golden case is **robust** when the selected index and the edge sets do not sit
 on a soft-threshold boundary. Two committed cases are deliberately degenerate:

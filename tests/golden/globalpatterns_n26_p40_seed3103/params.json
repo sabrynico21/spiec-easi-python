@@ -1,0 +1,23 @@
+{
+  "method": "mb",
+  "sel_criterion": "stars",
+  "nlambda": 5,
+  "lambda_min_ratio": 0.1,
+  "lambda_log": true,
+  "rep_num": 4,
+  "thresh": 0.2,
+  "source": "phyloseq::GlobalPatterns",
+  "source_n": 26,
+  "source_p": 19216,
+  "available_n": 26,
+  "available_p": 18988,
+  "zero_fraction": 0,
+  "library_size_min": 1064,
+  "library_size_median": 387676.5,
+  "library_size_max": 1690774,
+  "seed": 3103,
+  "n": 26,
+  "p": 40,
+  "dataset": "GlobalPatterns / Caporaso et al. 2011",
+  "taxa_strategy": "prevalent"
+}

@@ -1,0 +1,23 @@
+{
+  "method": "mb",
+  "sel_criterion": "stars",
+  "nlambda": 5,
+  "lambda_min_ratio": 0.1,
+  "lambda_log": true,
+  "rep_num": 4,
+  "thresh": 0.2,
+  "source": "SpiecEasi::amgut1.filt",
+  "source_n": 289,
+  "source_p": 127,
+  "available_n": 289,
+  "available_p": 127,
+  "zero_fraction": 0.313333333333333,
+  "library_size_min": 2240,
+  "library_size_median": 10697.5,
+  "library_size_max": 18651,
+  "seed": 3102,
+  "n": 20,
+  "p": 30,
+  "dataset": "American Gut Project Round 1",
+  "taxa_strategy": "spread"
+}

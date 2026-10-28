@@ -2,8 +2,8 @@
 # =============================================================================
 # generate_golden.R - R reference golden generator for the Python SpiecEasi (MB)
 #
-# Runs the *reference R source* (reference/R via pkgload::load_all) on a set of
-# deterministic synthetic count datasets and dumps, for every case:
+# Runs the *reference R source* (reference/R via pkgload::load_all) on QMP and
+# independent public microbiome cases and dumps, for every case:
 #   - the input counts and the exact parameters,
 #   - every deterministic intermediate (clr matrix, correlation matrix,
 #     lambda.max, lambda path),
@@ -31,6 +31,13 @@ suppressWarnings(suppressMessages({
 
 REF_R <- Sys.getenv("SPIEC_EASI_REF_R", "reference/R")
 OUT   <- Sys.getenv("GOLDEN_OUT", "tests/golden")
+
+# Load dataset objects from the installed R data packages before pkgload::load_all
+# shadows the SpiecEasi namespace with the reference source tree.
+PUBLIC_HELPER <- file.path("..", "scripts", "public_microbiome_cases.R")
+if (!file.exists(PUBLIC_HELPER)) stop("shared public-data selector not found: ", PUBLIC_HELPER)
+source(PUBLIC_HELPER)
+PUBLIC_CASES <- load_public_microbiome_cases()
 
 if (!dir.exists(REF_R)) stop("reference R source not found: ", REF_R)
 suppressWarnings(suppressMessages(pkgload::load_all(REF_R, quiet = TRUE)))
@@ -167,6 +174,8 @@ dump_case <- function(name, counts, params) {
   p <- ncol(counts)
 
   write_mat(counts, file.path(d, "counts.tsv"))
+  writeLines(colnames(counts), file.path(d, "taxa.txt"))
+  writeLines(rownames(counts), file.path(d, "sample_ids.txt"))
   write(toJSON(params, auto_unbox = TRUE, digits = NA),
         file.path(d, "params.json"))
 
@@ -201,6 +210,7 @@ dump_case <- function(name, counts, params) {
   merge <- lapply(seq_along(lams),
                   function(i) Matrix::Matrix(0, p, p, sparse = TRUE))
   rep_rows <- list()
+  rep_beta_rows <- list()
   for (k in seq_len(reps)) {
     hk <- huge::huge(X[idx[[k]], , drop = FALSE], method = "mb",
                      lambda = lams, verbose = FALSE)
@@ -213,12 +223,25 @@ dump_case <- function(name, counts, params) {
           rep = k - 1L, lambda_idx = i - 1L,
           i = ui[, 1] - 1L, j = ui[, 2] - 1L)
       }
+      b <- as.matrix(hk$beta[[i]])
+      bi <- which(b != 0, arr.ind = TRUE)
+      if (nrow(bi)) {
+        rep_beta_rows[[length(rep_beta_rows) + 1L]] <- data.frame(
+          rep = k - 1L, lambda_idx = i - 1L,
+          response = bi[, 2] - 1L, predictor = bi[, 1] - 1L,
+          value = fmt(b[bi])
+        )
+      }
     }
   }
   rep_rows <- if (length(rep_rows)) do.call(rbind, rep_rows)
               else empty_df(c("rep", "lambda_idx", "i", "j"))
   write_long(rep_rows, file.path(d, "rep_adj_path.tsv"),
              c("rep", "lambda_idx", "i", "j"))
+  rep_beta_rows <- if (length(rep_beta_rows)) do.call(rbind, rep_beta_rows)
+                   else empty_df(c("rep", "lambda_idx", "response", "predictor", "value"))
+  write_long(rep_beta_rows, file.path(d, "rep_beta_long.tsv"),
+             c("rep", "lambda_idx", "response", "predictor", "value"))
 
   summary_raw <- vapply(seq_along(lams), function(i) {
     m <- as.matrix(merge[[i]]) / reps
@@ -242,7 +265,9 @@ dump_case <- function(name, counts, params) {
 
   # 6. end-to-end spiec.easi (cross-check) ----------------------------------
   est <- spiec.easi(counts, method = "mb", sel.criterion = "stars",
-                    verbose = FALSE,
+                    verbose = FALSE, nlambda = params$nlambda,
+                    lambda.min.ratio = params$lambda_min_ratio,
+                    lambda.log = params$lambda_log,
                     pulsar.params = list(seed = params$seed,
                                          rep.num = reps,
                                          thresh = params$thresh))
@@ -261,30 +286,76 @@ dump_case <- function(name, counts, params) {
           " opt_index=", opt_index)
 }
 
-# ---- case definitions ------------------------------------------------------
+# ---- QMP real-data cases ---------------------------------------------------
+
+qmp_rda <- Sys.getenv("QMP_RDA", "../SPRING-master/data/QMP.rda")
+if (!file.exists(qmp_rda)) stop("QMP data not found: ", qmp_rda)
+load(qmp_rda)
+qmp <- as.matrix(QMP)
+prevalence_order <- order(colSums(qmp > 0), colnames(qmp))
+qmp_full <- qmp[, prevalence_order[seq_len(20)], drop = FALSE]
+
+small_taxa <- prevalence_order[
+  unique(round(seq(1, length(prevalence_order), length.out = 30)))
+]
+qmp_wide <- qmp[, small_taxa, drop = FALSE]
+covered <- rep(FALSE, ncol(qmp_wide))
+sample_rows <- integer()
+while (!all(covered)) {
+  candidates <- setdiff(seq_len(nrow(qmp_wide)), sample_rows)
+  gains <- vapply(candidates, function(i)
+    sum(qmp_wide[i, ] > 0 & !covered), integer(1))
+  next_row <- candidates[which.max(gains)]
+  sample_rows <- c(sample_rows, next_row)
+  covered <- covered | (qmp_wide[next_row, ] > 0)
+}
+if (length(sample_rows) > 20L) stop("Could not construct a 20-sample QMP p>n case")
+sample_rows <- c(sample_rows,
+                 head(setdiff(seq_len(nrow(qmp_wide)), sample_rows),
+                      20L - length(sample_rows)))
+qmp_pgt_n <- qmp_wide[sample_rows, , drop = FALSE]
 
 cases <- list(
-  list(name = "p05_n20",          n = 20,  p = 5,  seed = 101, mu = 12, weak = 0.40, strong = 0.90, zero_frac = 0),
-  list(name = "p20_n300",         n = 300, p = 20, seed = 102, mu = 12, weak = 0.40, strong = 0.90, zero_frac = 0),
-  list(name = "p20_n300_zeros",   n = 300, p = 20, seed = 103, mu = 10, weak = 0.40, strong = 0.90, zero_frac = 0.20),
-  list(name = "p30_n20_pgtn",     n = 20,  p = 30, seed = 104, mu = 10, weak = 0.30, strong = 0.85, zero_frac = 0.05),
-  list(name = "p50_n200",         n = 200, p = 50, seed = 105, mu = 12, weak = 0.40, strong = 0.90, zero_frac = 0),
-  list(name = "p30_n200_ratcheck", n = 200, p = 30, seed = 108, mu = 12, weak = 0.40, strong = 0.90, zero_frac = 0),
-  list(name = "p10_n150_zeros",   n = 150, p = 10, seed = 106, mu = 10, weak = 0.40, strong = 0.90, zero_frac = 0.20),
-  # Deliberately weak/degenerate case: documented as a non-robust golden
-  # (no lambda is stable -> opt_index falls back to 1).
-  list(name = "p08_n40_weak",     n = 40,  p = 8,  seed = 107, mu = 6,  weak = 0.15, strong = 0.25, zero_frac = 0)
+  list(name = "qmp_n106_p20", counts = qmp_full, seed = 1101,
+       dataset = "QMP", provenance = list()),
+  list(name = "qmp_n20_p30", counts = qmp_pgt_n, seed = 1102,
+       dataset = "QMP", provenance = list())
 )
 
 base_params <- list(method = "mb", sel_criterion = "stars",
-                    nlambda = 20L, lambda_min_ratio = 1e-3,
-                    lambda_log = TRUE, rep_num = 20L, thresh = 0.05)
+                    nlambda = 5L, lambda_min_ratio = 0.1,
+                    lambda_log = TRUE, rep_num = 4L, thresh = 0.2)
+
+for (public_case in PUBLIC_CASES) {
+  for (seed in c(3101L, 3102L, 3103L)) {
+    provenance <- list(
+      source = public_case$source,
+      taxa_strategy = public_case$taxa_strategy,
+      source_n = public_case$raw_n,
+      source_p = public_case$raw_p,
+      available_n = public_case$available_n,
+      available_p = public_case$available_p,
+      zero_fraction = public_case$zero_fraction,
+      library_size_min = public_case$library_size_min,
+      library_size_median = public_case$library_size_median,
+      library_size_max = public_case$library_size_max
+    )
+    cases[[length(cases) + 1L]] <- list(
+      name = sprintf("%s_seed%d", public_case$name, seed),
+      counts = public_case$input,
+      seed = seed,
+      dataset = public_case$dataset,
+      provenance = provenance
+    )
+  }
+}
 
 manifest <- list()
 for (cs in cases) {
-  counts <- gen_counts(cs$n, cs$p, cs$seed, cs$mu, cs$weak, cs$strong,
-                       cs$zero_frac)
-  params <- c(base_params, list(seed = cs$seed, n = cs$n, p = cs$p))
+  counts <- cs$counts
+  params <- c(base_params, cs$provenance,
+              list(seed = cs$seed, n = nrow(counts), p = ncol(counts),
+                   dataset = cs$dataset))
   dump_case(cs$name, counts, params)
   manifest[[cs$name]] <- params
 }

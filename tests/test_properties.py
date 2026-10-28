@@ -12,11 +12,11 @@ import pytest
 from spieceasi.pipeline import spiec_easi
 from spieceasi.transforms import clr
 
-GOLDEN = Path(__file__).parent / "golden"
+GOLDEN = Path(os.environ.get("SPIEC_EASI_GOLDEN_DIR", Path(__file__).parent / "golden"))
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("case", ["p20_n300", "p50_n200"])
+@pytest.mark.parametrize("case", ["qmp_n106_p20", "qmp_n20_p30"])
 def test_refit_adjacency_structure(case: str) -> None:
     counts = np.loadtxt(GOLDEN / case / "counts.tsv")
     params = json.loads((GOLDEN / case / "params.json").read_text())
@@ -46,6 +46,30 @@ def test_clr_handles_zeros_and_round_trips_positive() -> None:
     assert np.all(np.isfinite(out))
     # clr of a constant positive vector is zero
     assert np.allclose(clr(np.full(5, 3.0)), 0.0)
+
+
+def test_lambda_path_one_point_and_equal_endpoints() -> None:
+    from spieceasi.lambda_path import get_lam_path
+
+    np.testing.assert_array_equal(get_lam_path(2.0, 0.01, 1, log=True), [2.0])
+    np.testing.assert_array_equal(get_lam_path(2.0, 2.0, 4, log=False), [2.0] * 4)
+
+
+def test_duplicate_features_remain_finite_on_singular_design() -> None:
+    rng = np.random.default_rng(42)
+    counts = rng.poisson(4.0, size=(40, 5)).astype(float) + 1.0
+    counts[:, 4] = counts[:, 1]
+    result = spiec_easi(
+        counts,
+        nlambda=4,
+        lambda_min_ratio=0.1,
+        pulsar_params={"rep_num": 3, "subsample_ratio": 0.75, "seed": 4},
+    )
+
+    assert np.isfinite(result["lambda"]).all()
+    assert np.isfinite(result["stability"]).all()
+    assert np.isfinite(result["refit"]).all()
+    np.testing.assert_array_equal(result["refit"], result["refit"].T)
 
 
 def _simulate_sparse(

@@ -38,11 +38,16 @@ def test_rejects_too_few_samples() -> None:
         spiec_easi(np.ones((1, 3)), pulsar_params={"rep_num": 2})
 
 
-def test_rejects_constant_column() -> None:
+def test_raw_constant_count_column_is_not_rejected_before_clr() -> None:
     c = _counts()
     c[:, 2] = 7.0
-    with pytest.raises(ValueError, match="constant"):
-        spiec_easi(c, pulsar_params={"rep_num": 2})
+    result = spiec_easi(
+        c,
+        nlambda=3,
+        pulsar_params={"rep_num": 2, "seed": 4},
+    )
+    assert np.isfinite(result["lambda"]).all()
+    assert np.isfinite(result["stability"]).all()
 
 
 def test_warns_on_negative() -> None:
